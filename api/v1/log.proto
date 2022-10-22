@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package log.v1;
+
+option go_package = "github.com/visonhuo/api/log_v1";
+
+message Record {
+  uint64 offset = 1;
+  bytes value = 2;
+}
