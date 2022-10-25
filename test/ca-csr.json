@@ -1,0 +1,16 @@
+{
+    "CN": "Vison's Awesome CA",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "SG",
+            "L": "SG",
+            "ST": "Singapore",
+            "O": "Vison's Company",
+            "OU": "CA Services"
+        }
+    ]
+}

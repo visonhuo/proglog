@@ -3,12 +3,15 @@ package server
 import (
 	"context"
 
+	grpc_middle "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	api "github.com/visonhuo/proglog/api/v1"
 	"google.golang.org/grpc"
 )
 
 type Config struct {
-	CommitLog CommitLog
+	CommitLog  CommitLog
+	Authorizer Authorizer
 }
 
 type CommitLog interface {
@@ -16,13 +19,29 @@ type CommitLog interface {
 	Read(offset uint64) (*api.Record, error)
 }
 
+type Authorizer interface {
+	Authorize(subject, object, action string) error
+}
+
 type grpcServer struct {
 	api.UnimplementedLogServer
 	*Config
 }
 
-func NewGRPCServer(config *Config) (*grpc.Server, error) {
-	gsrv := grpc.NewServer()
+func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, error) {
+	opts = append(opts,
+		grpc.StreamInterceptor(
+			grpc_middle.ChainStreamServer(
+				grpc_auth.StreamServerInterceptor(authenticate),
+			),
+		),
+		grpc.UnaryInterceptor(
+			grpc_middle.ChainUnaryServer(
+				grpc_auth.UnaryServerInterceptor(authenticate),
+			),
+		),
+	)
+	gsrv := grpc.NewServer(opts...)
 	srv, err := newGRPCServer(config)
 	if err != nil {
 		return nil, err
@@ -39,6 +58,10 @@ func newGRPCServer(config *Config) (srv *grpcServer, err error) {
 }
 
 func (s *grpcServer) Produce(ctx context.Context, req *api.ProduceRequest) (*api.ProduceResponse, error) {
+	if err := s.Authorizer.Authorize(subject(ctx), objectWildcard, produceAction); err != nil {
+		return nil, err
+	}
+
 	offset, err := s.CommitLog.Append(req.Record)
 	if err != nil {
 		return nil, err
@@ -47,6 +70,10 @@ func (s *grpcServer) Produce(ctx context.Context, req *api.ProduceRequest) (*api
 }
 
 func (s *grpcServer) Consume(ctx context.Context, req *api.ConsumeRequest) (*api.ConsumeResponse, error) {
+	if err := s.Authorizer.Authorize(subject(ctx), objectWildcard, consumeAction); err != nil {
+		return nil, err
+	}
+
 	record, err := s.CommitLog.Read(req.Offset)
 	if err != nil {
 		return nil, err
@@ -55,6 +82,10 @@ func (s *grpcServer) Consume(ctx context.Context, req *api.ConsumeRequest) (*api
 }
 
 func (s *grpcServer) ProduceStream(stream api.Log_ProduceStreamServer) error {
+	if err := s.Authorizer.Authorize(subject(stream.Context()), objectWildcard, produceAction); err != nil {
+		return err
+	}
+
 	for {
 		req, err := stream.Recv()
 		if err != nil {
@@ -71,6 +102,10 @@ func (s *grpcServer) ProduceStream(stream api.Log_ProduceStreamServer) error {
 }
 
 func (s *grpcServer) ConsumeStream(req *api.ConsumeRequest, stream api.Log_ConsumeStreamServer) error {
+	if err := s.Authorizer.Authorize(subject(stream.Context()), objectWildcard, consumeAction); err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-stream.Context().Done():
