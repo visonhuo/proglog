@@ -2,20 +2,39 @@ package server
 
 import (
 	"context"
+	"flag"
 	"io/ioutil"
 	"net"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	api "github.com/visonhuo/proglog/api/v1"
 	"github.com/visonhuo/proglog/internal/auth"
 	"github.com/visonhuo/proglog/internal/config"
 	"github.com/visonhuo/proglog/internal/log"
+	"go.opencensus.io/examples/exporter"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
+
+var debug = flag.Bool("debug", false, "Enable observability for debugging.")
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if *debug {
+		logger, err := zap.NewDevelopment()
+		if err != nil {
+			panic(err)
+		}
+		zap.ReplaceGlobals(logger)
+	}
+	os.Exit(m.Run())
+}
 
 func TestGRPCServer(t *testing.T) {
 	for scenario, fn := range map[string]func(t *testing.T, root api.LogClient, nobody api.LogClient, cfg *Config){
@@ -63,6 +82,44 @@ func setupTest(t *testing.T) (api.LogClient, api.LogClient, *Config, func()) {
 	require.NoError(t, err)
 	authorizer := auth.New(config.ACLModeFile, config.ACLPolicyFile)
 
+	// initial telemetry export in debug mode
+	var closeTelemetryExporter = func() error { return nil }
+	if *debug {
+		metricsLogFile, err := ioutil.TempFile("", "metrics-*.log")
+		require.NoError(t, err)
+		t.Logf("metrics log file: %v", metricsLogFile.Name())
+
+		traceLogFile, err := ioutil.TempFile("", "traces-*.log")
+		require.NoError(t, err)
+		t.Logf("traces log file: %v", traceLogFile.Name())
+
+		telemetryExporter, err := exporter.NewLogExporter(exporter.Options{
+			ReportingInterval: time.Second,
+			MetricsLogFile:    metricsLogFile.Name(),
+			TracesLogFile:     traceLogFile.Name(),
+		})
+		require.NoError(t, err)
+		require.NoError(t, telemetryExporter.Start())
+
+		closeTelemetryExporter = func() error {
+			time.Sleep(1500 * time.Millisecond)
+			telemetryExporter.Stop()
+			telemetryExporter.Close()
+			metricsLog, _ := ioutil.ReadFile(metricsLogFile.Name())
+			t.Logf("metrics log content: \n%v\n", string(metricsLog))
+			tracesLog, _ := ioutil.ReadFile(traceLogFile.Name())
+			t.Logf("traces log content: \n%v\n", string(tracesLog))
+
+			if err := os.Remove(metricsLogFile.Name()); err != nil {
+				return err
+			}
+			if err := os.Remove(traceLogFile.Name()); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+
 	// start up log server
 	serverTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
 		CertFile: config.ServerCertFile,
@@ -85,6 +142,7 @@ func setupTest(t *testing.T) (api.LogClient, api.LogClient, *Config, func()) {
 		_ = nobodyClientConn.Close()
 		_ = l.Close()
 		_ = clog.Remove()
+		_ = closeTelemetryExporter()
 	}
 }
 
