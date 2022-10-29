@@ -15,6 +15,7 @@ import (
 	"github.com/visonhuo/proglog/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 func TestAgent(t *testing.T) {
@@ -27,10 +28,11 @@ func TestAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	peerTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
-		CertFile: config.RootClientCertFile,
-		KeyFile:  config.RootClientKeyFile,
-		CAFile:   config.CAFile,
-		Server:   false,
+		CertFile:   config.RootClientCertFile,
+		KeyFile:    config.RootClientKeyFile,
+		CAFile:     config.CAFile,
+		Server:     false,
+		ServerName: "127.0.0.1",
 	})
 	require.NoError(t, err)
 
@@ -59,6 +61,7 @@ func TestAgent(t *testing.T) {
 			StartJoinAddrs:  startJoinAddrs,
 			ACLModeFile:     config.ACLModeFile,
 			ACLPolicyFile:   config.ACLPolicyFile,
+			Bootstrap:       i == 0,
 		})
 		require.NoError(t, err)
 		agents = append(agents, agent)
@@ -104,6 +107,16 @@ func TestAgent(t *testing.T) {
 		}
 		return replicated
 	}, 3*time.Second, 500*time.Millisecond)
+
+	// the leader doesn't replicate from the followers
+	consumeResponse, err = leaderClient.Consume(context.Background(), &api.ConsumeRequest{
+		Offset: produceResponse.Offset + 1,
+	})
+	require.Nil(t, consumeResponse)
+	require.Error(t, err)
+	got := status.Code(err)
+	want := status.Code(api.ErrOffsetOutOfRange{}.GRPCStatus().Err())
+	require.Equal(t, want, got)
 }
 
 func client(t *testing.T, agent *Agent, tlsConfig *tls.Config) (*grpc.ClientConn, api.LogClient) {

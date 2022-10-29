@@ -8,10 +8,11 @@ import (
 )
 
 type TLSConfig struct {
-	CertFile string
-	KeyFile  string
-	CAFile   string
-	Server   bool
+	CertFile   string
+	KeyFile    string
+	CAFile     string
+	Server     bool
+	ServerName string
 }
 
 func SetupTLSConfig(cfg TLSConfig) (*tls.Config, error) {
@@ -45,6 +46,7 @@ func SetupTLSConfig(cfg TLSConfig) (*tls.Config, error) {
 		} else {
 			// for client side, it used to verify the server’s certificate.
 			tlsConfig.RootCAs = ca
+			tlsConfig.ServerName = cfg.ServerName
 		}
 	}
 	return tlsConfig, nil
