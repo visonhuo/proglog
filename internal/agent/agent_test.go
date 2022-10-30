@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/travisjeffery/go-dynaport"
 	api "github.com/visonhuo/proglog/api/v1"
 	"github.com/visonhuo/proglog/internal/config"
+	"github.com/visonhuo/proglog/internal/loadbalance"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
@@ -28,11 +30,11 @@ func TestAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	peerTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
-		CertFile:   config.RootClientCertFile,
-		KeyFile:    config.RootClientKeyFile,
-		CAFile:     config.CAFile,
-		Server:     false,
-		ServerName: "127.0.0.1",
+		CertFile:      config.RootClientCertFile,
+		KeyFile:       config.RootClientKeyFile,
+		CAFile:        config.CAFile,
+		Server:        false,
+		ServerAddress: "127.0.0.1",
 	})
 	require.NoError(t, err)
 
@@ -84,18 +86,25 @@ func TestAgent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	consumeResponse, err := leaderClient.Consume(context.Background(), &api.ConsumeRequest{
-		Offset: produceResponse.Offset,
-	})
-	require.NoError(t, err)
-	require.Equal(t, []byte("foo"), consumeResponse.Record.Value)
+	require.Eventually(t, func() bool {
+		consumeResponse, err := leaderClient.Consume(context.Background(), &api.ConsumeRequest{
+			Offset: produceResponse.Offset,
+		})
+		if err != nil {
+			return false
+		}
+		if bytes.Compare([]byte("foo"), consumeResponse.Record.Value) != 0 {
+			return false
+		}
+		return true
+	}, 3*time.Second, 500*time.Millisecond)
 
 	// wait until replication has finished
 	require.Eventually(t, func() bool {
 		replicated := true
 		for i := 1; i < 3; i++ {
 			followerConn, followerClient := client(t, agents[1], peerTLSConfig)
-			consumeResponse, err = followerClient.Consume(context.Background(), &api.ConsumeRequest{
+			consumeResponse, err := followerClient.Consume(context.Background(), &api.ConsumeRequest{
 				Offset: produceResponse.Offset,
 			})
 			_ = followerConn.Close()
@@ -109,7 +118,7 @@ func TestAgent(t *testing.T) {
 	}, 3*time.Second, 500*time.Millisecond)
 
 	// the leader doesn't replicate from the followers
-	consumeResponse, err = leaderClient.Consume(context.Background(), &api.ConsumeRequest{
+	consumeResponse, err := leaderClient.Consume(context.Background(), &api.ConsumeRequest{
 		Offset: produceResponse.Offset + 1,
 	})
 	require.Nil(t, consumeResponse)
@@ -125,7 +134,7 @@ func client(t *testing.T, agent *Agent, tlsConfig *tls.Config) (*grpc.ClientConn
 	rpcAddr, err := agent.Config.RPCAddr()
 	require.NoError(t, err)
 
-	conn, err := grpc.Dial(rpcAddr, opts...)
+	conn, err := grpc.Dial(fmt.Sprintf("%s:///%s", loadbalance.Name, rpcAddr), opts...)
 	require.NoError(t, err)
 	return conn, api.NewLogClient(conn)
 }
