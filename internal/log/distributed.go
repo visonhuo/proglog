@@ -16,9 +16,10 @@ import (
 )
 
 type DistributedLog struct {
-	config Config
-	log    *Log
-	raft   *raft.Raft
+	config   Config
+	log      *Log
+	raft     *raft.Raft
+	logStore *logStore
 }
 
 func NewDistributedLog(dataDir string, config Config) (*DistributedLog, error) {
@@ -47,13 +48,14 @@ func (l *DistributedLog) setupRaft(dataDir string) error {
 	fsm := &fsm{log: l.log}
 
 	// A log store where Raft stores those command logs
+	var err error
 	logDir := filepath.Join(dataDir, "raft", "log")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err = os.MkdirAll(logDir, 0755); err != nil {
 		return err
 	}
 	logConfig := l.config
 	logConfig.Segment.InitialOffset = 1
-	logStore, err := newLogStore(logDir, logConfig)
+	l.logStore, err = newLogStore(logDir, logConfig)
 	if err != nil {
 		return err
 	}
@@ -100,12 +102,12 @@ func (l *DistributedLog) setupRaft(dataDir string) error {
 
 	// Create the Raft instance and bootstrap the cluster
 	l.raft, err = raft.NewRaft(
-		config, fsm, logStore, stableStore, snapshotStore, transport,
+		config, fsm, l.logStore, stableStore, snapshotStore, transport,
 	)
 	if err != nil {
 		return err
 	}
-	hasState, err := raft.HasExistingState(logStore, stableStore, snapshotStore)
+	hasState, err := raft.HasExistingState(l.logStore, stableStore, snapshotStore)
 	if err != nil {
 		return err
 	}
@@ -113,7 +115,7 @@ func (l *DistributedLog) setupRaft(dataDir string) error {
 		config := raft.Configuration{
 			Servers: []raft.Server{{
 				ID:      config.LocalID,
-				Address: transport.LocalAddr(),
+				Address: raft.ServerAddress(l.config.Raft.BindAddr),
 			}},
 		}
 		err = l.raft.BootstrapCluster(config).Error()
@@ -212,6 +214,9 @@ func (l *DistributedLog) Close() error {
 	if err := f.Error(); err != nil {
 		return err
 	}
+	if err := l.logStore.Close(); err != nil {
+		return err
+	}
 	return l.log.Close()
 }
 
@@ -220,7 +225,7 @@ func (l *DistributedLog) GetServers() ([]*api.Server, error) {
 	if err := future.Error(); err != nil {
 		return nil, err
 	}
-	
+
 	var servers []*api.Server
 	for _, server := range future.Configuration().Servers {
 		leaderAddr, _ := l.raft.LeaderWithID()

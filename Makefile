@@ -1,5 +1,6 @@
-.PHONY: init gencert compile test
+.PHONY: init gencert compile test build-docker
 CONFIG_PATH=${HOME}/.proglog/
+TAG ?= 0.0.2
 
 init:
 	mkdir -p ${CONFIG_PATH}
@@ -43,3 +44,6 @@ $(CONFIG_PATH)/policy.csv:
 	cp test/policy.csv $(CONFIG_PATH)/policy.csv
 test: $(CONFIG_PATH)/policy.csv $(CONFIG_PATH)/model.conf
 	go test -race ./...
+
+build-docker:
+	docker build -t github.com/visonhuo/proglog:$(TAG) .

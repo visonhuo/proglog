@@ -28,7 +28,7 @@ type Config struct {
 	DataDir         string
 	NodeName        string
 	StartJoinAddrs  []string
-	ACLModeFile     string
+	ACLModelFile    string
 	ACLPolicyFile   string
 	Bootstrap       bool
 }
@@ -113,12 +113,16 @@ func (a *Agent) setupLog() error {
 		return bytes.Compare(b, []byte{byte(log.RaftRPC)}) == 0
 	})
 
+	var err error
 	logConfig := log.Config{}
 	logConfig.Raft.StreamLayer = log.NewStreamLayer(raftLn, a.Config.ServerTLSConfig, a.Config.PeerTLSConfig)
+	logConfig.Raft.BindAddr, err = a.Config.RPCAddr()
+	if err != nil {
+		return err
+	}
 	logConfig.Raft.LocalID = raft.ServerID(a.Config.NodeName)
 	logConfig.Raft.Bootstrap = a.Config.Bootstrap
 
-	var err error
 	a.log, err = log.NewDistributedLog(a.Config.DataDir, logConfig)
 	if err != nil {
 		return err
@@ -130,7 +134,7 @@ func (a *Agent) setupLog() error {
 }
 
 func (a *Agent) setupServer() error {
-	authorizer := auth.New(a.Config.ACLModeFile, a.Config.ACLPolicyFile)
+	authorizer := auth.New(a.Config.ACLModelFile, a.Config.ACLPolicyFile)
 	serverConfig := &server.Config{
 		CommitLog:   a.log,
 		Authorizer:  authorizer,

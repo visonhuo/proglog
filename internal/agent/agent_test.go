@@ -61,7 +61,7 @@ func TestAgent(t *testing.T) {
 			DataDir:         dataDir,
 			NodeName:        fmt.Sprintf("%d", i),
 			StartJoinAddrs:  startJoinAddrs,
-			ACLModeFile:     config.ACLModeFile,
+			ACLModelFile:    config.ACLModeFile,
 			ACLPolicyFile:   config.ACLPolicyFile,
 			Bootstrap:       i == 0,
 		})
