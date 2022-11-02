@@ -4,6 +4,9 @@ image:
   tag: 0.0.2
   pullPolicy: IfNotPresent
 
+service:
+  lb: false
+
 serfPort: 8401
 rpcPort: 8400
 replicas: 3
